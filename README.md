@@ -1,45 +1,46 @@
-# Control Bancario AIE — Streamlit
+# AIE San Justo - Resumen Operativo Bancario
 
-App para analizar resúmenes de cuenta corriente en PDF **del formato aportado por el usuario** (banco con CBU que comienza en 310), con control individual de saldos, resumen operativo, préstamos, descubierto y controles fiscales potenciales.
+App **Streamlit** para cargar un resumen bancario PDF del mismo formato que `MONTEGROSSO JUL-SET26.pdf` y obtener dos descargas independientes:
 
-## Instalación local
+1. **PDF «Resumen Operativo: Registración Módulo IVA»**, tabla de Concepto / Importe siguiendo el formato usado por AIE en Galicia.
+2. **Excel `.xlsx` real** con hojas `Resumen operativo`, `Movimientos`, `Gastos`, `Créditos bancarios`, `Control y conciliación` y `Para revisar`.
+
+## Reglas contables
+
+- Netos, IVA y brutos por alícuota 21%, 10,5% y 27%. La base neta es el movimiento de gasto identificado, no una división de importes sin sustento.
+- Gastos exentos y no gravados **solo** cuando lo indica el concepto o el responsable los reclasifica; gastos sin IVA identificado se muestran aparte.
+- IVA se vincula a una base cuando coinciden **fecha, referencia e importe para la alícuota**, sin usar fecha como único identificador. La alícuota inferida se marca como pendiente de respaldo documental.
+- Percepciones de IVA, otras percepciones, Ley 25.413 Débito y Crédito, SIRCREB y retenciones independientes.
+- El **TOTAL** operativo suma cada bruto y tributo **una sola vez**: no duplica netos e IVA ni subtotales de Ley 25.413.
+- Créditos/préstamos se muestran aparte y **no se consideran gastos** salvo intereses cobrados identificados.
+- `IVA potencial` no equivale a crédito fiscal legalmente computable, y el descubierto no permite conocer el límite crediticio contratado.
+- Cada movimiento conserva fecha, descripción, débito, crédito y saldo; se controlan los saldos movimiento a movimiento.
+- Los importes en Excel son números y las sumas del Resumen Operativo llevan fórmulas con valores precalculados.
+
+## GitHub / Streamlit Community Cloud
+
+1. Crear un nuevo repositorio GitHub y subir **el contenido** del ZIP, no el ZIP mismo.
+2. En [share.streamlit.io](https://share.streamlit.io) elegir el repositorio y la rama `main`.
+3. Archivo principal: `app.py`. Python 3.12 (`runtime.txt` incluido).
+4. Streamlit instalará `requirements.txt` y ejecutará la app.
+
+## Archivos principales
+
+- `app.py`: interfaz, descarga de PDF y Excel, control de créditos.
+- `processor.py`: parser probado para el PDF Montegrosso y auditoría de saldo.
+- `operativo.py`: cálculo de conceptos y total contable.
+- `excel_export.py`: genera Excel Office Open XML sin librerías externas de Excel.
+- `pdf_export.py`: resumen PDF de una página con tabla simple.
+- `tests/test_app.py`: validación sobre casos sintéticos + validación real con PDF opcional.
+
+## Pruebas
+
+En el repositorio, con las dependencias instaladas:
 
 ```bash
-python -m venv .venv
-# Windows: .venv\Scripts\activate
-# Linux/macOS: source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
+python -m unittest discover -s tests -v
 ```
 
-## GitHub + Streamlit Community Cloud
+La app **no** acepta silenciosamente resúmenes de otro banco o formato. Si el parser no reconoce las líneas, informa el error; habría que incorporar un lector específico para ese banco. No adjuntar PDFs con datos de clientes al repositorio público.
 
-1. Crear un repositorio en GitHub y subir **los archivos del ZIP a la raíz**, no el directorio contenedor.
-2. En https://share.streamlit.io/ elegir **Create app**, seleccionar repositorio y rama (p. ej. `main`).
-3. En **Main file path** escribir `app.py` y desplegar.
-4. Seleccionar Python 3.12 en la configuración avanzada si está disponible. `runtime.txt` documenta la versión objetivo; la opción efectiva la controla Streamlit Cloud.
-5. Cargar el PDF en la web. Evitar colocar resúmenes reales en el repositorio público.
-
-## Hojas del Excel
-
-- Resumen operativo — importes por categoría sin duplicar débitos.
-- Movimientos — original, referencia, débitos/créditos, saldo, reconstrucción y diferencia.
-- Por mes — acumulados mensuales.
-- Créditos fiscales — movimientos potencialmente computables, sujetos a revisión.
-- Prestamos — préstamos y gastos por descubierto, separados.
-- Controles — conciliación con totales del PDF.
-- Auditoria — líneas no extraídas, movimientos inconsistentes y sin clasificar.
-- Criterios — alcance, limitaciones y forma de cálculo.
-
-## Alcance y advertencias
-
-- No es un lector universal de resúmenes de cualquier banco. El patrón de columnas y fecha se validó con el PDF de Montegrosso julio-septiembre 2026.
-- Una operación se clasifica como débito o crédito **por la variación efectiva del saldo**, no por la posición visual de los importes. Si no coincide, se muestra una diferencia y NO se asigna arbitrariamente.
-- Los conceptos fiscales se exponen como *a verificar*. Los porcentajes del impuesto Ley 25.413 configurados por el usuario son una **estimación**, no determinan de modo automático beneficios fiscales, ni la contabilización de IVA.
-- Los desembolsos de préstamos **no son ingresos operativos**, y las cobranzas de cuotas **no son íntegramente gastos**. Para el desglose de capital/intereses, tasa, vencimientos y deuda remanente se necesita el contrato o cuadro de amortización.
-- Los saldos deudores son descubiertos en la cuenta; no miden el límite autorizado ni el crédito disponible.
-- Sin OCR: los PDFs escaneados sin texto son rechazados explícitamente.
-- Si se adjuntan PDFs que comparten movimientos, se bloquea la exportación para evitar duplicaciones.
-- Los datos se procesan durante la sesión; no hay base de datos ni persistencia programada.
-
-**Uso interno AIE · Developer Alfonso Alderete**
+**Herramienta para uso interno AIE San Justo | Developer Alfonso Alderete**

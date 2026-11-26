@@ -1,121 +1,106 @@
-import streamlit as st
+"""AIE San Justo: PDF banco -> Resumen Operativo (PDF) + Excel auditable."""
+from copy import deepcopy
+from datetime import datetime
+from html import escape
 from decimal import Decimal
-from processor import extract_pdf, merge_reports, summarize
-from exporter import export_excel
+import re
+import streamlit as st
+from processor import extract_pdf, apply_review, ALICUOTAS
+from operativo import make_summary, operation_rows, money_ar
+from excel_export import export_excel
+from pdf_export import export_pdf
 
-st.set_page_config(page_title='Control Bancario AIE',page_icon='🏦',layout='wide')
+st.set_page_config(page_title='AIE | Resumen Operativo Bancario', page_icon='🏦',layout='centered')
 st.markdown('''<style>
-.block-container{max-width:1380px;padding-top:1.6rem}
-.stMetric{border:1px solid #dfe5ef;border-radius:11px;padding:13px}
-h1,h2,h3{color:#172B4D}
-.aie-foot{color:#657287;border-top:1px solid #dfe5ef;margin-top:40px;padding-top:14px;font-size:13px}
+.block-container {max-width:980px;padding-top:1.8rem}
+h1,h2,h3 {color:#16344E}
+.aie-tbl {border-collapse:collapse;width:100%;font-size:14px;margin-top:6px}
+.aie-tbl th {background:#dedede;text-align:left;padding:9px 12px;border:1px solid #bdbdbd}
+.aie-tbl td {padding:7px 12px;border:1px solid #c9c9c9}
+.aie-tbl td:last-child {text-align:right;font-variant-numeric:tabular-nums}
+.aie-tbl .subtotal td {background:#f4f6f7;font-weight:600}
+.aie-tbl .total td {background:#e7eff4;font-weight:750;font-size:16px}
+.aie-foot {margin-top:32px;padding-top:12px;border-top:1px solid #ddd;color:#777;font-size:13px;text-align:center}
 </style>''',unsafe_allow_html=True)
 
-st.title('🏦 Control de resúmenes bancarios | AIE')
-st.caption('Procesamiento, control de saldos, resumen operativo, préstamos y créditos fiscales potenciales.')
-with st.sidebar:
-    st.header('Configuración')
-    st.info('Compatible con el formato PDF textual del resumen suministrado (cuenta 37151/3). No es un lector universal de todos los bancos.')
-    debit_pct=st.number_input('% Ley 25.413 al débito a estimar como computable',0.0,100.0,0.0,1.0)
-    credit_pct=st.number_input('% Ley 25.413 al crédito a estimar como computable',0.0,100.0,0.0,1.0)
-    st.caption('Por defecto 0%: la computabilidad depende de normas, período, contribuyente y situación fiscal. No constituye asesoramiento tributario.')
-    st.markdown('**Control de crédito bancario:** desembolsos, cobranzas de cuotas y descubierto. Sin contrato ni cuadro de amortización no se determina deuda pendiente, límite o interés implícito.')
-files=st.file_uploader('Adjuntá uno o más resúmenes PDF de la misma cuenta (períodos no superpuestos)',type=['pdf'],accept_multiple_files=True)
-if not files:
-    st.info('Cargá un PDF para comenzar. La app no almacena tus archivos en una base de datos.')
+st.title('Resumen Operativo Bancario')
+st.caption('Registración Módulo IVA · AIE San Justo')
+up=st.file_uploader('Subir resumen bancario PDF',type=['pdf'],help='Lector probado con la estructura del resumen MONTEGROSSO JUL-SET26. Cada carga se procesa de manera independiente.')
+if not up:
+    st.info('Cargá el PDF para obtener el Resumen Operativo como el de Galicia, y el Excel de movimientos.')
     st.stop()
-reports=[]
-for f in files:
-    try:
-        report=extract_pdf(f.getvalue(),f.name)
-        reports.append(report)
-    except Exception as e:
-        st.error(f'Error en {f.name}: {e}')
-if len(reports)!=len(files) or not reports:st.stop()
+
 try:
-    grouped=merge_reports(reports)
-except ValueError as e:
-    st.error(str(e));st.stop()
-allrows=[x for group in grouped.values() for x in group]
-# Orden cronológico con estabilidad original (sort preserva orden de movimientos de igual día).
-from datetime import datetime
-allrows.sort(key=lambda x:datetime.strptime(x.fecha,'%d/%m/%Y'))
-periods=list(grouped)
-st.write('**Cuenta:**',reports[0]['cuenta'],' · **Titular:**',reports[0]['titular'],' · **Períodos:**',', '.join(periods))
-selected=st.multiselect('Meses para análisis y exportación',periods,default=periods)
-selectedrows=[x for x in allrows if x.periodo in selected]
-if not selectedrows:st.warning('Seleccioná al menos un período.');st.stop()
-summary=summarize(selectedrows,Decimal(str(debit_pct)),Decimal(str(credit_pct)))
-def ars(n):
-    if n is None:return '—'
-    x=f'{n:,.2f}'.replace(',','X').replace('.',',').replace('X','.')
-    return '$ '+x
-r1=st.columns(4)
-r1[0].metric('Débitos',ars(summary['debitos']))
-r1[1].metric('Créditos',ars(summary['creditos']))
-r1[2].metric('Movimiento neto',ars(summary['neto']))
-r1[3].metric('Saldo del último movimiento',ars(summary['saldo_ultimo']))
-r2=st.columns(4)
-r2[0].metric('Intereses descubierto',ars(summary['intereses_descubierto']))
-r2[1].metric('IVA a verificar',ars(summary['iva_a_verificar']))
-r2[2].metric('Ley 25.413 débito',ars(summary['ley_debito']))
-r2[3].metric('Estimación computable Ley 25.413',ars(summary['ley_credito_fiscal_estimado']))
-if summary['inconsistencias']:
-    st.error(f'⚠️ {summary["inconsistencias"]} movimientos con inconsistencias o sin signo validado. Revisar antes de utilizar los importes.')
-else:st.success(f'✓ {summary["movimientos"]} movimientos sin diferencias en sus saldos individuales.')
-for report in reports:
-    for warning in report['avisos']:st.warning(f'{report["archivo"]}: {warning}')
-if len(selected)!=len(periods):
-    st.info('Vista filtrada: los controles contra totales impresos en el PDF solo corresponden al informe íntegro, no al subconjunto de meses.')
-if len(reports)==1 and len(selected)==len(periods):
-    bank=reports[0]['totales_banco']
-    if 'ley_debito' in bank:
-        delta=bank['ley_debito']-summary['ley_debito']
-        if delta:st.error(f'Impuesto Ley 25.413: diferencia con total impreso {ars(delta)}.')
-        else:st.success('✓ Ley 25.413 al débito coincide con el total impreso en el PDF.')
+    rep=extract_pdf(up.getvalue(),up.name)
+except Exception as ex:
+    st.error('No fue posible leer el resumen. '+str(ex));st.stop()
 
-t1,t2,t3,t4,t5=st.tabs(['Resumen operativo','Movimientos','Crédito bancario','Créditos fiscales','Auditoría'])
-with t1:
-    st.subheader('Detalle operativo sin duplicar gastos e impuestos')
-    st.caption('Los gastos financieros, IVA e impuestos forman parte de los débitos: no se suman nuevamente al total.')
-    cats=[(k,ars(v)) for k,v in sorted(summary['clasificados'].items())]
-    st.dataframe([{'Categoría':k,'Importe':v} for k,v in cats],hide_index=True,use_container_width=True)
-    st.markdown('**Por período**')
-    rows=[]
-    for period in selected:
-        s=summarize(grouped[period]);rows.append({'Período':period,'Débitos':ars(s['debitos']),'Créditos':ars(s['creditos']),'Intereses descubierto':ars(s['intereses_descubierto']),'IVA':ars(s['iva_a_verificar']),'Ley 25.413 débito':ars(s['ley_debito']),'Saldo cierre':ars(s['saldo_ultimo'])})
-    st.dataframe(rows,hide_index=True,use_container_width=True)
-with t2:
-    st.subheader('Movimientos bancarios')
-    st.dataframe([x.record() for x in selectedrows],hide_index=True,use_container_width=True)
-with t3:
-    col1,col2,col3=st.columns(3)
-    col1.metric('Desembolsos préstamo',ars(summary['desembolsos_prestamo']))
-    col2.metric('Cobranzas de créditos / cuotas',ars(summary['cuotas_prestamo']))
-    col3.metric('Movimientos con saldo negativo',summary['movimientos_saldo_negativo'])
-    st.warning('Una cobranza de crédito puede contener capital, interés, comisiones y otros conceptos. No se infiere descomposición, deuda vigente ni tasa sin contrato/cuadro de amortización. El saldo negativo corresponde a descubierto bancario.')
-    st.dataframe([x.record() for x in selectedrows if x.categoria in ('Desembolso de préstamo','Cobro de préstamo/cuota','Intereses por descubierto','Otros intereses')],hide_index=True,use_container_width=True)
-with t4:
-    st.subheader('Importes fiscales potenciales a revisar')
-    st.info('IVA, Ley 25.413, percepciones y SIRCREB se muestran por separado. El cálculo del impuesto computable depende de los porcentajes configurados en el panel lateral; el IVA no se presume computable automáticamente.')
-    fiscal=[x.record() for x in selectedrows if x.tratamiento_fiscal]
-    st.dataframe(fiscal,hide_index=True,use_container_width=True)
-with t5:
-    st.write('**Diferencias de saldo:**',summary['inconsistencias'])
-    for report in reports:
-        st.write(f'**{report["archivo"]}** – {report["paginas"]} páginas; {len(report["movimientos"])} movimientos')
-        st.write('Saldo inicial:',ars(report['saldo_inicial']),' · Saldo final declarado:',ars(report['saldo_final_informado']))
-        st.write('Totales del PDF:',{k:ars(v) for k,v in report['totales_banco'].items()})
-        if report['no_extraidas']:st.dataframe(report['no_extraidas'],hide_index=True,use_container_width=True)
-    st.dataframe([x.record() for x in selectedrows if x.observacion or x.categoria=='Sin clasificar'],hide_index=True,use_container_width=True)
+periods=sorted(set(m.periodo for m in rep['movimientos']))
+selected=st.selectbox('Período', ['Período completo']+periods)
+all_period=selected=='Período completo'
+movements=deepcopy([m for m in rep['movimientos'] if all_period or m.periodo==selected])
+if not movements:
+    st.error('No hay movimientos para el período elegido.');st.stop()
 
-# Si se combinan reportes, no atribuir controles impresos de un documento al total multi-PDF.
-if len(reports)==1:
-    export_report=reports[0]
-else:
-    export_report={'saldo_final_informado':None,'totales_banco':{},'avisos':['Archivo combinado: controles impresos de PDFs individuales consultables en pantalla.']}
-if len(selected)!=len(periods):
-    export_report={**export_report,'saldo_final_informado':None,'totales_banco':{},'avisos':export_report.get('avisos',[])+['Filtro aplicado: no comparar totales generales impresos en PDF con un período parcial.']}
-content=export_excel(export_report,selectedrows,Decimal(str(debit_pct)),Decimal(str(credit_pct)))
-st.download_button('📥 Descargar Excel: resumen operativo + movimientos + controles',data=content,file_name='control_bancario_AIE_'+('_'.join(selected))+'.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True,type='primary')
-st.markdown('<div class="aie-foot">Herramienta para uso interno AIE · Developer Alfonso Alderete · Resultados sujetos a verificación documental y contable.</div>',unsafe_allow_html=True)
+with st.expander('Ajustes manuales de clasificación (opcional)', expanded=False):
+    st.caption('Corregí únicamente operaciones respaldadas. Sin IVA identificado no equivale a exento.')
+    editables=[m for m in movements if m.debito>0 and m.naturaleza in ('Gasto','Pendiente revisión')]
+    if editables:
+        entries=[{'ID':m.id,'Fecha':m.fecha,'Concepto':m.detalle,'Débito':float(m.debito),
+                  'Naturaleza':m.naturaleza,'Rubro de gasto':m.rubro or m.categoria,'Tratamiento IVA':m.alicuota} for m in editables]
+        edited=st.data_editor(entries,hide_index=True,num_rows='fixed',use_container_width=True,
+            disabled=['ID','Fecha','Concepto','Débito'],key='ajuste_operativo',
+            column_config={'Naturaleza':st.column_config.SelectboxColumn('Naturaleza',options=['Gasto','Pendiente revisión','Movimiento no operativo']),
+                           'Tratamiento IVA':st.column_config.SelectboxColumn('Tratamiento IVA',options=ALICUOTAS),
+                           'Débito':st.column_config.NumberColumn('Débito',format='%.2f')})
+        for w in apply_review(movements, edited):st.warning(w)
+
+s=make_summary(movements)
+st.subheader('Resumen Operativo: Registración Módulo IVA')
+html='<table class="aie-tbl"><thead><tr><th>Concepto</th><th>Importe</th></tr></thead><tbody>'
+for key,label,val,subtotal in operation_rows(s):
+    typ='total' if key=='total' else 'subtotal' if subtotal else ''
+    html+=f'<tr class="{typ}"><td>{escape(label)}</td><td>{money_ar(val)}</td></tr>'
+html+='</tbody></table>'
+st.markdown(html,unsafe_allow_html=True)
+st.caption('Los importes Bruto y el subtotal Ley 25.413 son informativos: no se duplican en el TOTAL.')
+
+period_title=(f'{periods[0]} a {periods[-1]}' if all_period and len(periods)>1 else periods[0] if all_period else selected)
+name=re.sub(r'[^a-zA-Z0-9_-]+','_',rep.get('cuenta','cuenta'))+'_'+selected.replace('Período completo','completo')
+try:
+    pdf=export_pdf(s,period_title,rep.get('titular',''),rep.get('cuenta',''))
+    excel=export_excel(rep,movements,period_title,selected_all=all_period)
+except Exception as ex:
+    st.error(f'No se pudieron crear las descargas: {ex}');st.stop()
+
+l,r=st.columns(2)
+with l:st.download_button('Descargar resumen operativo PDF',data=pdf,file_name=f'AIE_Resumen_Operativo_{name}.pdf',mime='application/pdf',type='primary',use_container_width=True)
+with r:st.download_button('Descargar movimientos Excel',data=excel,file_name=f'AIE_Control_Bancario_{name}.xlsx',mime='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',use_container_width=True)
+
+with st.expander('¿Hay créditos bancarios o préstamos?',expanded=True):
+    if s['tiene_credito_bancario']:
+        st.success('Sí: el extracto contiene movimientos de préstamos o saldos deudores.')
+    else:st.info('No se identificaron préstamos ni descubierto en los movimientos seleccionados.')
+    a,b=st.columns(2)
+    a.metric('Desembolsos de préstamos', '$ '+money_ar(s['prestamos_desembolsados']))
+    b.metric('Cobranza de créditos / cuotas', '$ '+money_ar(s['prestamos_cobrados']))
+    st.caption('El extracto no permite determinar el saldo adeudado del préstamo ni el límite de financiación disponible.')
+
+with st.expander('Controles de integridad e IVA'):
+    first,last=movements[0],movements[-1]
+    saldo_ini=first.saldo-first.credito+first.debito
+    computed=saldo_ini+s['creditos']-s['debitos']
+    st.write(f'**Movimientos procesados:** {s["movimientos"]}')
+    st.write(f'**Saldo inicial:** $ {money_ar(saldo_ini)}')
+    st.write(f'**Saldo final calculado:** $ {money_ar(computed)}')
+    st.write(f'**Diferencias de saldos:** {s["diferencias"]}')
+    if all_period and rep.get('saldo_final_informado') is not None:
+        st.write(f'**Diferencia contra saldo final del PDF:** $ {money_ar(last.saldo-rep["saldo_final_informado"])}')
+    st.write(f'**IVA bancario potencial a revisar:** $ {money_ar(sum(s["iva"].values())+s["iva_sin_vincular"])}')
+    st.caption('IVA informado o vinculado no implica automáticamente crédito fiscal computable; debe revisarse el respaldo fiscal.')
+    if s['pendientes'] or s['diferencias'] or rep['no_extraidas']:
+        st.warning(f'Pendientes: {s["pendientes"]} clasificaciones, {s["diferencias"]} diferencias de saldo y {len(rep["no_extraidas"])} líneas no extraídas. Revisar la hoja Para revisar.')
+    else:st.success('Los movimientos seleccionados se extrajeron, clasificaron y conciliaron sin diferencias.')
+    if not all_period:st.caption('Los acumulados impresos por el banco se comparan solamente cuando se procesa todo el archivo.')
+
+st.markdown('<div class="aie-foot">Herramienta para uso interno AIE San Justo | Developer Alfonso Alderete</div>',unsafe_allow_html=True)
