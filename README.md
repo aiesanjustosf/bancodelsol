@@ -15,7 +15,7 @@ App **Streamlit** para cargar un resumen bancario PDF del mismo formato que `MON
 - Créditos/préstamos se muestran aparte y **no se consideran gastos** salvo intereses cobrados identificados.
 - `IVA potencial` no equivale a crédito fiscal legalmente computable, y el descubierto no permite conocer el límite crediticio contratado.
 - Cada movimiento conserva fecha, descripción, débito, crédito y saldo; se controlan los saldos movimiento a movimiento.
-- Los importes en Excel son números y las sumas del Resumen Operativo llevan fórmulas con valores precalculados.
+- Los importes en Excel se exportan como valores numéricos compatibles con Excel.
 
 ## GitHub / Streamlit Community Cloud
 
@@ -29,7 +29,7 @@ App **Streamlit** para cargar un resumen bancario PDF del mismo formato que `MON
 - `app.py`: interfaz, descarga de PDF y Excel, control de créditos.
 - `processor.py`: parser probado para el PDF Montegrosso y auditoría de saldo.
 - `operativo.py`: cálculo de conceptos y total contable.
-- `excel_export.py`: genera Excel Office Open XML sin librerías externas de Excel.
+- `excel_export.py`: genera Excel `.xlsx` compatible mediante `openpyxl`.
 - `pdf_export.py`: resumen PDF de una página con tabla simple.
 - `tests/test_app.py`: validación sobre casos sintéticos + validación real con PDF opcional.
 

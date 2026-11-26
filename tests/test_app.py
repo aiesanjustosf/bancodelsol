@@ -6,27 +6,14 @@ from xml.etree import ElementTree as ET
 from pathlib import Path
 from sys import path
 path.insert(0,str(Path(__file__).resolve().parents[1]))
-from processor import extract_pdf
-from operativo import make_summary, operation_rows
+from operativo import make_summary
 from excel_export import export_excel
 from pdf_export import export_pdf
+from openpyxl import load_workbook
 
 class TestExports(unittest.TestCase):
-    @classmethod
-    def setUpClass(cls):
-        # Tests con un resumen bancario sintético mínimo del formato Montegrosso.
-        import fitz
-        doc=fitz.open();page=doc.new_page();page.insert_text((30,30),
-            'Cuenta: 37151/3 [20-10685397-6] - MONTEGROSSO, LUIS ALBERTO\n'
-            '01/07/2026 SALDO INICIAL 100.00\n'
-            '02/07/2026 INTERESES POR GIRO EN DESCUBIERTO    10188    100.00    0.00\n'
-            '02/07/2026 IMPUESTO AL VALOR AGREGADO    10188    10.50    -10.50\n'
-            '03/07/2026 LEY No 25.413 POR OPERACIONES DE DEBITO    10202    5.00    -15.50\n'
-            'SALDO ACREEDOR CONTABLE AL 03/07/2026 -15.50', fontsize=9)
-        # Synthetic PDF may be rejected if bank format differs; use assembled movements instead.
-        cls.fakepdf=doc.tobytes();doc.close()
     def test_totals(self):
-        from processor import Movement,ZERO
+        from processor import Movement, ZERO
         def mk(i,cat,nature,debit,credit=0,rate='No aplica',iva=0):
             return Movement(str(i),'01/07/2026','2026-07',cat,str(i),Decimal(str(debit)),Decimal(str(credit)),ZERO,ZERO,ZERO,cat,nature,cat,rate,'',Decimal(str(iva)),'',1,'example.pdf')
         rows=[mk(1,'Intereses por descubierto','Gasto','100','0','10,5%','10.50'),
@@ -46,10 +33,13 @@ class TestExports(unittest.TestCase):
             self.assertEqual(archive.testzip(),None)
             self.assertEqual(len([x for x in archive.namelist() if x.startswith('xl/worksheets/sheet')]),6)
             for x in archive.namelist():
-                if x.endswith('.xml'):ET.fromstring(archive.read(x))
-            ops=archive.read('xl/worksheets/sheet1.xml')
-            self.assertIn(b'115.50',ops)
-            self.assertIn(b'SUM(',ops)
+                if x.endswith('.xml'):
+                    ET.fromstring(archive.read(x))
+        wb=load_workbook(BytesIO(xlsx), data_only=True)
+        self.assertEqual(wb.sheetnames[0], 'Resumen operativo')
+        ws=wb['Resumen operativo']
+        self.assertEqual(ws['A1'].value, 'Resumen Operativo: Registración Módulo IVA')
+        self.assertAlmostEqual(float(ws['B24'].value), 115.50, places=2)
         pdf=export_pdf(s,'2026-07','PRUEBA','37151/3')
         self.assertTrue(pdf.startswith(b'%PDF'))
         import fitz
@@ -58,4 +48,5 @@ class TestExports(unittest.TestCase):
         self.assertIn('Registraci',d[0].get_text())
         d.close()
 
-if __name__=='__main__':unittest.main()
+if __name__=='__main__':
+    unittest.main()
