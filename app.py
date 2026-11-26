@@ -14,7 +14,7 @@ from pdf_export import export_pdf
 BASE_DIR = Path(__file__).resolve().parent
 ASSETS = BASE_DIR / 'assets'
 LOGO_PATH = ASSETS / 'aie_logo.png'
-FAVICON_PATH = ASSETS / 'aie_favicon.png'
+FAVICON_PATH = ASSETS / 'aie_favicon.ico'
 page_icon = Image.open(FAVICON_PATH) if FAVICON_PATH.exists() else '🏦'
 
 st.set_page_config(
